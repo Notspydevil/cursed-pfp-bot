@@ -71,16 +71,19 @@ async def generate_pfp(
 
     try:
         optimized_prompt = prompt
+        
+        # Gemini AI prompt enhancer ko aur strong banate hain
         if gemini_model:
             safety_prompt = (
-                f"You are an expert AI prompt engineer. Refine and optimize the following image generation prompt "
-                f"to make it extremely high quality, detailed, and completely safe for work (SFW), "
-                f"ensuring accurate characters, anime styles, or real-world themes requested by the user. "
+                f"You are a master AI art prompt engineer. Expand the user's short prompt into a rich, highly detailed, "
+                f"visually stunning image generation prompt in English. If the user specifies a known personality or gamer like 'Techno Gamerz', "
+                f"describe a cool gaming setup, stylish gamer character with headphones and glowing RGB lighting fitting that theme. "
+                f"Keep it completely safe for work (SFW). "
                 f"User prompt: '{prompt}'. "
-                f"Output ONLY the optimized prompt in English, nothing else."
+                f"Give me ONLY the final detailed descriptive prompt text, nothing else."
             )
             response = gemini_model.generate_content(safety_prompt)
-            if response and response.text:
+            if response and hasattr(response, 'text') and response.text:
                 optimized_prompt = response.text.strip()
 
         encoded_prompt = urllib.parse.quote(optimized_prompt)
@@ -93,7 +96,7 @@ async def generate_pfp(
 
         embed = discord.Embed(
             title="✨ Your Smart & Safe PFP is Ready!",
-            description=f"**Original:** {prompt}\n**Gemini Optimized:** {optimized_prompt}",
+            description=f"**Original:** {prompt}\n**Gemini Optimized:** {optimized_prompt[:200]}...",
             color=discord.Color.purple()
         )
         if image:
@@ -129,4 +132,4 @@ if __name__ == '__main__':
         bot.run(TOKEN)
     else:
         print("Error: DISCORD_TOKEN environment variable not found.")
-        
+            
