@@ -11,9 +11,8 @@ ALLOWED_SERVER_IDS = []
 
 BANNED_WORDS = [
     r"\bnsfw\b", r"\bnude\b", r"\bnaked\b", r"\bsex\b", r"\bporn\b",
-   ,r"\bgore\b", r"\bkill\b", r"\babuse\b"
+r"\bgore\b", r"\bkill\b", r"\babuse\b"
 ]
-
 def contains_banned_words(text: str) -> bool:
     for pattern in BANNED_WORDS:
         if re.search(pattern, text, re.IGNORECASE):
