@@ -1,3 +1,5 @@
 discord.py
-requests
-Flask
+google-generativeai
+python-dotenv
+flask
+
