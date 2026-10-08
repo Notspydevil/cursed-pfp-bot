@@ -1,135 +1,404 @@
 import os
-from flask import Flask
+import base64
+import asyncio
 import threading
 import re
-import urllib.parse
+
+from flask import Flask
+
 import discord
 from discord import app_commands
 from discord.ext import commands
-import google.generativeai as genai
 
-# Render Environment Variable se API Key load karein (Safe & Secure)
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+from google import genai
 
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-else:
-    gemini_model = None
 
+# =========================================================
+# CONFIG
+# =========================================================
+
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# Current Gemini image-generation model
+GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image"
+
+# Leave empty [] to allow every server where the bot is installed.
 ALLOWED_SERVER_IDS = []
 
-BANNED_WORDS = [
-    r"nsfw\b", r"nude\b", r"naked\b", r"sex\b", r"porn\b",
-    r"bkl\b", r"chut\b", r"bhosd\b"
+
+# =========================================================
+# GEMINI CLIENT
+# =========================================================
+
+if not GEMINI_API_KEY:
+    print("WARNING: GEMINI_API_KEY environment variable not found.")
+    gemini_client = None
+else:
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+
+
+# =========================================================
+# BASIC SAFETY FILTER
+# =========================================================
+
+BANNED_PATTERNS = [
+    r"\bnsfw\b",
+    r"\bnude\b",
+    r"\bnudes\b",
+    r"\bnaked\b",
+    r"\bporn\b",
+    r"\bpornography\b",
+    r"\bsex\b",
+    r"\bsexual\b",
+    r"\berotic\b",
+    r"\bexplicit\b",
+    r"\bxxx\b",
 ]
 
+
 def contains_banned_words(text: str) -> bool:
-    for pattern in BANNED_WORDS:
+    for pattern in BANNED_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
             return True
+
     return False
+
+
+# =========================================================
+# DISCORD BOT
+# =========================================================
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+
+bot = commands.Bot(
+    command_prefix="!",
+    intents=intents
+)
+
+
+# =========================================================
+# BOT READY
+# =========================================================
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name}')
+    print(f"Logged in as {bot.user}")
+
     try:
         synced = await bot.tree.sync()
-        print(f'Synced {len(synced)} command(s)')
+        print(f"Synced {len(synced)} command(s)")
     except Exception as e:
-        print(f'Error syncing commands: {e}')
+        print(f"Command sync error: {e}")
 
-@bot.tree.command(name="generate-pfp", description="Generate or edit an aesthetic AI profile picture with Gemini intelligence!")
+
+# =========================================================
+# GENERATE PFP COMMAND
+# =========================================================
+
+@bot.tree.command(
+    name="generate-pfp",
+    description="Generate a high-quality AI profile picture."
+)
 @app_commands.describe(
-    prompt="Describe the PFP you want (e.g., Techno Gamerz, cyber punk anime boy).",
-    image="Optional: Upload an image to make edits or generate similar PFP"
+    prompt="Describe the PFP you want.",
+    image="Optional reference image."
 )
 async def generate_pfp(
     interaction: discord.Interaction,
     prompt: str,
     image: discord.Attachment = None
 ):
-    if ALLOWED_SERVER_IDS and interaction.guild_id not in ALLOWED_SERVER_IDS:
+
+    # -----------------------------------------------------
+    # SERVER CHECK
+    # -----------------------------------------------------
+
+    if (
+        ALLOWED_SERVER_IDS
+        and interaction.guild_id not in ALLOWED_SERVER_IDS
+    ):
         await interaction.response.send_message(
-            "❌ This server is not authorized to use Cursed Pfp AI. Contact the owner for access!",
+            "❌ This server is not authorized to use Cursed Pfp AI.",
             ephemeral=True
         )
         return
+
+
+    # -----------------------------------------------------
+    # BASIC PROMPT SAFETY CHECK
+    # -----------------------------------------------------
 
     if contains_banned_words(prompt):
         await interaction.response.send_message(
-            "⚠️ Your prompt contains prohibited terms. Please keep prompts safe and SFW!",
+            "⚠️ I can only generate safe, SFW images. "
+            "Please try a different prompt.",
             ephemeral=True
         )
         return
 
+
+    # -----------------------------------------------------
+    # GEMINI CHECK
+    # -----------------------------------------------------
+
+    if gemini_client is None:
+        await interaction.response.send_message(
+            "❌ Gemini API is not configured correctly. "
+            "Please contact the bot owner.",
+            ephemeral=True
+        )
+        return
+
+
+    # -----------------------------------------------------
+    # IMAGE CHECK
+    # -----------------------------------------------------
+
+    if image is not None:
+
+        if not image.content_type:
+            await interaction.response.send_message(
+                "❌ I couldn't identify that file as an image.",
+                ephemeral=True
+            )
+            return
+
+        if not image.content_type.startswith("image/"):
+            await interaction.response.send_message(
+                "❌ Please upload a valid image file.",
+                ephemeral=True
+            )
+            return
+
+
     await interaction.response.defer(thinking=True)
 
+
     try:
-        optimized_prompt = prompt
-        
-        # Gemini AI prompt enhancer ko aur strong banate hain
-        if gemini_model:
-            safety_prompt = (
-                f"You are a master AI art prompt engineer. Expand the user's short prompt into a rich, highly detailed, "
-                f"visually stunning image generation prompt in English. If the user specifies a known personality or gamer like 'Techno Gamerz', "
-                f"describe a cool gaming setup, stylish gamer character with headphones and glowing RGB lighting fitting that theme. "
-                f"Keep it completely safe for work (SFW). "
-                f"User prompt: '{prompt}'. "
-                f"Give me ONLY the final detailed descriptive prompt text, nothing else."
+
+        # -------------------------------------------------
+        # BUILD SMART IMAGE PROMPT
+        # -------------------------------------------------
+
+        smart_prompt = f"""
+Create a high-quality SFW profile picture based on the user's request below.
+
+USER REQUEST:
+{prompt}
+
+IMPORTANT INSTRUCTIONS:
+
+- Understand the user's complete request instead of blindly copying keywords.
+- Preserve the important identity, theme, character, colors, clothing,
+  environment, mood, pose and composition requested by the user.
+- If the user mentions a public gaming creator or celebrity, create a
+  respectful, non-sexual artistic depiction suitable for a profile picture.
+- Make the result visually polished and detailed.
+- Use professional lighting, strong composition and clear subject separation.
+- Make the image suitable for a Discord profile picture.
+- Prefer a square 1:1 composition.
+- Do not add random characters or unrelated objects.
+- Do not create sexual, nude, erotic or explicit content.
+- Do not sexualize minors.
+- Do not create hateful or otherwise harmful imagery.
+- If the request conflicts with safety requirements, refuse the unsafe
+  portion and produce no unsafe imagery.
+
+Create the final image directly.
+"""
+
+
+        # -------------------------------------------------
+        # PREPARE GEMINI INPUT
+        # -------------------------------------------------
+
+        gemini_input = []
+
+
+        # Reference image first
+        if image is not None:
+
+            image_bytes = await image.read()
+
+            # Limit extremely large uploads
+            if len(image_bytes) > 10 * 1024 * 1024:
+                await interaction.followup.send(
+                    "❌ Please use an image smaller than 10 MB."
+                )
+                return
+
+            encoded_image = base64.b64encode(
+                image_bytes
+            ).decode("utf-8")
+
+            gemini_input.append(
+                {
+                    "type": "image",
+                    "data": encoded_image,
+                    "mime_type": image.content_type
+                }
             )
-            response = gemini_model.generate_content(safety_prompt)
-            if response and hasattr(response, 'text') and response.text:
-                optimized_prompt = response.text.strip()
 
-        encoded_prompt = urllib.parse.quote(optimized_prompt)
 
-        if image and image.content_type and image.content_type.startswith("image/"):
-            image_url = urllib.parse.quote(image.url)
-            final_image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?image={image_url}&nologo=true"
-        else:
-            final_image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?nologo=true"
+        # Text prompt
+        gemini_input.append(
+            {
+                "type": "text",
+                "text": smart_prompt
+            }
+        )
+
+
+        # -------------------------------------------------
+        # GENERATE IMAGE
+        # -------------------------------------------------
+
+        # Google SDK call is synchronous, so run it in a
+        # separate thread to avoid blocking Discord.
+
+        def generate_image():
+
+            return gemini_client.interactions.create(
+                model=GEMINI_IMAGE_MODEL,
+                input=gemini_input,
+                response_format={
+                    "type": "image",
+                    "mime_type": "image/png",
+                    "aspect_ratio": "1:1",
+                    "image_size": "1K"
+                }
+            )
+
+
+        interaction_result = await asyncio.to_thread(
+            generate_image
+        )
+
+
+        # -------------------------------------------------
+        # GET GENERATED IMAGE
+        # -------------------------------------------------
+
+        if not interaction_result.output_image:
+            await interaction.followup.send(
+                "⚠️ Gemini did not return an image. "
+                "Try changing your prompt."
+            )
+            return
+
+
+        image_data = interaction_result.output_image.data
+
+        generated_bytes = base64.b64decode(image_data)
+
+
+        # -------------------------------------------------
+        # SEND IMAGE TO DISCORD
+        # -------------------------------------------------
+
+        generated_file = discord.File(
+            fp=__import__("io").BytesIO(generated_bytes),
+            filename="cursed-pfp.png"
+        )
+
 
         embed = discord.Embed(
-            title="✨ Your Smart & Safe PFP is Ready!",
-            description=f"**Original:** {prompt}\n**Gemini Optimized:** {optimized_prompt[:200]}...",
+            title="✨ Your Cursed PFP is Ready!",
+            description=(
+                f"**Prompt:** {prompt}\n\n"
+                "Generated with Gemini AI."
+            ),
             color=discord.Color.purple()
         )
-        if image:
-            embed.set_footer(text="Generated with image reference edit/variation.")
+
+        if image is not None:
+            embed.set_footer(
+                text="Gemini generated this using your reference image."
+            )
         else:
-            embed.set_footer(text="Generated with Gemini AI intelligence.")
-        
-        embed.set_image(url=final_image_url)
-        await interaction.followup.send(embed=embed)
+            embed.set_footer(
+                text="Generated with Gemini AI • SFW"
+            )
+
+
+        # Attach image to embed
+        embed.set_image(
+            url="attachment://cursed-pfp.png"
+        )
+
+
+        await interaction.followup.send(
+            embed=embed,
+            file=generated_file
+        )
+
 
     except Exception as e:
-        print(f"Error in generate-pfp: {e}")
-        await interaction.followup.send(f"⚠️ Error aa gaya bhai: {str(e)}", ephemeral=True)
 
-# Flask keep alive server for Render
-app = Flask('')
+        print("========================================")
+        print("IMAGE GENERATION ERROR")
+        print(str(e))
+        print("========================================")
 
-@app.route('/')
+        await interaction.followup.send(
+            "⚠️ Image generate nahi ho paayi.\n"
+            "Thodi der baad dobara try kar bhai.",
+            ephemeral=True
+        )
+
+
+# =========================================================
+# RENDER WEB SERVER
+# =========================================================
+
+app = Flask(__name__)
+
+
+@app.route("/")
 def home():
-    return "Bot is alive and running!"
+    return "Cursed Pfp AI is alive!"
 
-def run():
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+
+def run_web():
+    port = int(
+        os.environ.get("PORT", 8080)
+    )
+
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
+
 
 def keep_alive():
-    t = threading.Thread(target=run)
-    t.start()
 
-if __name__ == '__main__':
+    thread = threading.Thread(
+        target=run_web,
+        daemon=True
+    )
+
+    thread.start()
+
+
+# =========================================================
+# START BOT
+# =========================================================
+
+if __name__ == "__main__":
+
     keep_alive()
-    TOKEN = os.getenv("DISCORD_TOKEN")
-    if TOKEN:
-        bot.run(TOKEN)
+
+    if not DISCORD_TOKEN:
+        print(
+            "ERROR: DISCORD_TOKEN environment variable not found."
+        )
+
+    elif not GEMINI_API_KEY:
+        print(
+            "ERROR: GEMINI_API_KEY environment variable not found."
+        )
+
     else:
-        print("Error: DISCORD_TOKEN environment variable not found.")
-            
+        bot.run(DISCORD_TOKEN)
