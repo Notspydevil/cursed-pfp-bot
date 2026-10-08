@@ -11,7 +11,7 @@ ALLOWED_SERVER_IDS = []
 
 BANNED_WORDS = [
     r"\bnsfw\b", r"\bnude\b", r"\bnaked\b", r"\bsex\b", r"\bporn\b",
-    r"\bblood\b", r"\bgore\b", r"\bkill\b", r"\babuse\b"
+   ,r"\bgore\b", r"\bkill\b", r"\babuse\b"
 ]
 
 def contains_banned_words(text: str) -> bool:
@@ -81,9 +81,25 @@ async def generate_pfp(
 
     await interaction.followup.send(embed=embed)
 
-TOKEN = os.getenv("DISCORD_TOKEN")
-if TOKEN:
-    bot.run(TOKEN)
-else:
-    print("Error: DISCORD_TOKEN environment variable not set!")
-  
+# --- Render Keep-Alive Web Server ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is alive and running!"
+
+def run_web():
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+
+def keep_alive():
+    t = threading.Thread(target=run_web)
+    t.start()
+
+if __name__ == "__main__":
+    keep_alive()
+    TOKEN = os.getenv("DISCORD_TOKEN")
+    if TOKEN:
+        bot.run(TOKEN)
+    else:
+        print("Error: DISCORD_TOKEN environment variable not found.")
+        
