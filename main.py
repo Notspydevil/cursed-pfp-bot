@@ -20,10 +20,8 @@ from google import genai
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Current Gemini image-generation model
 GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image"
 
-# Leave empty [] to allow every server where the bot is installed.
 ALLOWED_SERVER_IDS = []
 
 
@@ -217,12 +215,10 @@ Create the final image directly.
         gemini_input = []
 
 
-        # Reference image first
         if image is not None:
 
             image_bytes = await image.read()
 
-            # Limit extremely large uploads
             if len(image_bytes) > 10 * 1024 * 1024:
                 await interaction.followup.send(
                     "❌ Please use an image smaller than 10 MB."
@@ -242,7 +238,6 @@ Create the final image directly.
             )
 
 
-        # Text prompt
         gemini_input.append(
             {
                 "type": "text",
@@ -254,9 +249,6 @@ Create the final image directly.
         # -------------------------------------------------
         # GENERATE IMAGE
         # -------------------------------------------------
-
-        # Google SDK call is synchronous, so run it in a
-        # separate thread to avoid blocking Discord.
 
         def generate_image():
 
@@ -323,7 +315,6 @@ Create the final image directly.
             )
 
 
-        # Attach image to embed
         embed.set_image(
             url="attachment://cursed-pfp.png"
         )
@@ -335,16 +326,19 @@ Create the final image directly.
         )
 
 
+    # =====================================================
+    # ERROR HANDLING
+    # =====================================================
+
     except Exception as e:
 
         print("========================================")
         print("IMAGE GENERATION ERROR")
-        print(str(e))
+        print(repr(e))
         print("========================================")
 
         await interaction.followup.send(
-            "⚠️ Image generate nahi ho paayi.\n"
-            "Thodi der baad dobara try kar bhai.",
+            f"⚠️ Image generation failed.\n```{str(e)[:1500]}```",
             ephemeral=True
         )
 
@@ -362,6 +356,7 @@ def home():
 
 
 def run_web():
+
     port = int(
         os.environ.get("PORT", 8080)
     )
@@ -391,14 +386,17 @@ if __name__ == "__main__":
     keep_alive()
 
     if not DISCORD_TOKEN:
+
         print(
             "ERROR: DISCORD_TOKEN environment variable not found."
         )
 
     elif not GEMINI_API_KEY:
+
         print(
             "ERROR: GEMINI_API_KEY environment variable not found."
         )
 
     else:
+
         bot.run(DISCORD_TOKEN)
